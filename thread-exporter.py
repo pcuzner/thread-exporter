@@ -9,23 +9,17 @@ import logging
 from enum import Enum
 from threading import Event
 from argparse import ArgumentParser
-from typing import List
+from tokenize import Name
+from typing import List, Set, Dict
 
 from prometheus_client import start_http_server
 from prometheus_client.core import GaugeMetricFamily, REGISTRY, CounterMetricFamily
 
-logging.basicConfig(
-    filename='thread-exporter.log',
-    filemode='w',
-    format='%(asctime)s %(levelname)-8s %(message)s',
-    level=logging.DEBUG)
-
-logger = logging.getLogger()
 shutdown_event = Event()
 
 
 def shutdown_handler(signum, frame):
-    logger.info('shutting down')
+    logger.info('Shutting down')
     shutdown_event.set()
 
 
@@ -51,7 +45,6 @@ class Options:
     def __init__(self):
         self._parse_args()
         self._apply_env()
-        self._show_active_options()
 
     def _parse_args(self):
         parser = ArgumentParser(
@@ -72,14 +65,18 @@ class Options:
 
     def _apply_env(self):
         if 'FILTER' in os.environ:
+            logger.info('applying filter value fron environment variable')
             self.filter = os.environ['FILTER']
         if 'PORT' in os.environ:
+            logger.info('applying port value fron environment variable')
             self.port = os.environ['PORT']
 
-    def _show_active_options(self):
+    def as_json(self) -> Dict[str, str]:
+        options = {}
         for attrib in self.__dict__:
             if  not attrib.startswith('_'):
-                logger.info(f'Parameter: {attrib} = {getattr(self, attrib)}')
+                options[attrib] = getattr(self, attrib)
+        return options
 
 
 # def get_ticks() -> int:
@@ -90,47 +87,55 @@ class Options:
 # that necessary
 
 @time_it
-def filter_pids(filter: str, procfs: str = '/proc') -> List[str]:
-    pid_list = []
+def filter_pids(filter_str: str, procfs: str = '/proc') -> Set[str]:
+    # pids are int's but since they'll end up as labels and therefore need
+    # to be str, they are kept as str
+    pids: Set[str] = set()
 
-    def _process_pids():
+    def _process_pids(pid_list):
         all_pids = [pid_path[6:] for pid_path in glob.glob(f'{procfs}/*')
                     if pid_path[6:].isnumeric()]
-        pids = filter.split(',')
-
-        for pid in pids:
+        for pid in pid_list:
             if pid not in all_pids:
                 logger.warning(f'No matching pid found for filter {pid}')
                 continue
-            pid_list.append(pid)
-        return pid_list
-
-    def _process_pid_names():
+            yield pid
+ 
+    def _process_pid_names(txt_patterns):
         # we need an offset to point to where to find the pid
         offset = len(procfs.split('/'))
-
         pid_cmd_list = glob.glob(f'{procfs}/*/comm')
         for com in pid_cmd_list:
             try:
                 with open(com) as f:
-                    if f.read().rstrip() == filter:
-                        pid_list.append(com.split('/')[offset])
+                    if f.read().rstrip() in txt_patterns:
+                        yield com.split('/')[offset]
             except FileNotFoundError:
                 # some pids may be shortlived and disappear between the glob and the
                 # point at which we try to read the comm file
                 continue
 
-        return pid_list
+    txt_patterns = set()
+    pid_list = set()
 
-    if ',' in filter or filter.isnumeric():
-        return _process_pids()
+    filters = filter_str.split(',')
+    for f in filters:
+        if f.isnumeric():
+            pid_list.add(f)
+            continue
+        txt_patterns.add(f)
 
-    return _process_pid_names()
+    pids.update([p for p in _process_pids(pid_list)])
+    pids.update([p for p in _process_pid_names(txt_patterns)])
+    return pids
 
 
 def read_file(file_path) -> str:
-    with open(file_path, 'rb') as f:
-        data = f.read()
+    try:
+        with open(file_path, 'rb') as f:
+            data = f.read()
+    except FileNotFoundError:
+        return ''
 
     # replace null chars with spaces to make the returned string easier to parse
     return data.decode('utf-8').replace('\x00', ' ').rstrip()
@@ -141,10 +146,14 @@ class DaemonNames:
 
     @staticmethod
     def _extract_ceph(cmdline: str) -> str:
-        # FIXME : this works for cephadm/baremetal but not for k8s/rook
         parts = cmdline.split(' ')
-        _name_pos = parts.index('-n')
-        return parts[_name_pos + 1]
+        if '-n' in parts:
+            return parts[parts.index('-n') + 1]
+        m = re.search('--id=\S+', cmdline)
+        if m:
+            _, value = m.group(0).split('=')
+            return f'{parts[0].replace("ceph-", "")}.{value}'
+        return ''
 
     @classmethod
     def supported_daemons(cls) -> List[str]:
@@ -171,7 +180,7 @@ class DaemonNames:
         return DaemonNames._extract_ceph(cmdline)
 
 class Process:
-    def __init__(self, procfs, pid):
+    def __init__(self, procfs: str, pid: str):
         self._procfs = procfs
         self.pid = pid
         self.pname = read_file(f'{self._procfs}/{pid}/comm')
@@ -285,10 +294,11 @@ class CPUTimeCollector:
     @time_it
     def collect(self):
         self.clear()
-        pid_list = filter_pids(self._opts.filter, self.procfs)
-        if not pid_list:
+        pids = filter_pids(self._opts.filter, self.procfs)
+        if not pids:
             logger.error(f'No processes matching filter ({self._opts.filter}) detected')
-        processes = [ParentProcess(self.procfs, pid) for pid in pid_list]
+        logger.info(f'Processing PIDs: {",".join(pids)}')
+        processes = [ParentProcess(self.procfs, pid) for pid in pids]
         for p in processes:
             self.metrics['perfscale_process_cpu_user_seconds_total'].add_metric([
                 p.daemon_name,
@@ -318,15 +328,19 @@ class CPUTimeCollector:
             yield self.metrics[metric_name]
 
 
-def main() -> None:
+def main(opts:Options) -> None:
     logger.info('thread-exporter starting')
-    opts = Options()
+    for param, val in opts.as_json().items():
+        logger.info(f'Parameter: {param} = {val}')
+
     collector = CPUTimeCollector(opts)
     REGISTRY.register(collector)
     logger.info(f'exporter is using the {collector.procfs} filesystem for stats')
+
     logger.info(f'daemon name information provided for the following daemons;')
     for daemon_type in DaemonNames.supported_daemons():
         logger.info(f'- {daemon_type}')
+    
     logger.info(f'Starting http server on port {opts.port}')
     start_http_server(opts.port)
     
@@ -338,4 +352,14 @@ def main() -> None:
 
 
 if __name__ == '__main__':
-    main()
+    opts = Options()
+
+    logging.basicConfig(
+        filename='thread-exporter.log',
+        filemode='w',
+        format='%(asctime)s %(levelname)-8s %(message)s',
+        level=logging.DEBUG)
+
+    logger = logging.getLogger()
+
+    main(opts)

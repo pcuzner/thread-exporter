@@ -36,15 +36,15 @@ Expose the cpu usage of given PID/children to Prometheus
 
 options:
   -h, --help       show this help message and exit
-  --filter FILTER  filter pids - by name or a list of comma separated pid id's
+  --filter FILTER  filter pids by name or pid (can also be a comma separated list)
   --port PORT      tcp port to bind to (default is 9199)
 ``` 
-The filter parameter is obviously the most important. This value can be the text of the command (the same as `/proc/<pid>/comm`) or it can be a comma separated list of specific PIDs to monitor.
+The filter parameter is obviously the most important. This value can be the text of the command (the same as `/proc/<pid>/comm`), a pid number or a comma separated list of pids or names or a mix of both.
 
 eg.  
 ```
 thread-exporter.py --filter Xorg
-thread-exporter.py --filter 3240,6435
+thread-exporter.py --filter 3240,gnome-shell
 ```
 
 ### As a container on a Host (not k8s)
@@ -89,13 +89,14 @@ Using a relatively low scrape interval, helps to capture CPU spikes.
   
 ## Ideas for Future work A.K.A the TODO list
 
-1. update the DaemonNames class to extract the name correctly within k8s/rook
-2. update logging to send log records to file and stdout for k8s deployments
-3. create sample yaml for kubernetes deployment
-4. Add tox to lint and mypy the code
-5. Enhance the filter to accept multiple process names e.g. ceph-osd,rbd-mirror
-6. add the collect time for the main functions to the metrics
-7. add sample grafana dashboard
-8. add a config file to hold the filter definition
-9. make the daemon respond to a reload (SIGHUP), so you can update what is being tracked dynamically
+- [ ] update the DaemonNames class to extract the name correctly within k8s/rook
+- [ ] update logging to send log records to file and stdout for k8s deployments
+- [ ] create sample yaml for kubernetes deployment
+- [ ] add tox to lint and mypy the code
+- [ ] add the collect time for the main functions to the metrics
+- [ ] add sample grafana dashboard
+- [ ] add a config file to hold the filter definition
+- [ ] make the daemon respond to a reload (SIGHUP), so you can update what is being tracked dynamically
+- [ ] cath filenotfound on readfile - i.e. osd restarts
+- [ ] during osd restart the extract ceph fails to find the -n paramter 
 
