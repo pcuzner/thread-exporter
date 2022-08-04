@@ -352,7 +352,6 @@ def main(opts:Options) -> None:
 
 
 if __name__ == '__main__':
-    opts = Options()
 
     logging.basicConfig(
         filename='thread-exporter.log',
@@ -361,5 +360,7 @@ if __name__ == '__main__':
         level=logging.DEBUG)
 
     logger = logging.getLogger()
+
+    opts = Options()
 
     main(opts)
