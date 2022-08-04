@@ -147,12 +147,14 @@ class DaemonNames:
     @staticmethod
     def _extract_ceph(cmdline: str) -> str:
         parts = cmdline.split(' ')
+        # cephadm
         if '-n' in parts:
             return parts[parts.index('-n') + 1]
-        m = re.search('--id=\S+', cmdline)
-        if m:
-            _, value = m.group(0).split('=')
-            return f'{parts[0].replace("ceph-", "")}.{value}'
+        # rook
+        if '--id' in parts:
+            return f'{parts[0].replace("ceph-", "")}.{parts[parts.index("--id") + 1]}'
+
+        # unknown
         return ''
 
     @classmethod
@@ -342,7 +344,7 @@ def main(opts:Options) -> None:
         logger.info(f'- {daemon_type}')
     
     logger.info(f'Starting http server on port {opts.port}')
-    start_http_server(opts.port)
+    start_http_server(int(opts.port))
     
     logger.info('thread-exporter started')
     while not shutdown_event.is_set():
