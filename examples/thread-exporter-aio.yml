@@ -1,0 +1,86 @@
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: thread-exporter
+  namespace: openshift-storage
+  labels:
+    app: thread-exporter
+spec:
+  selector:
+    matchLabels:
+      app: thread-exporter
+  template:
+    metadata:
+      labels:
+        app: thread-exporter
+    spec:
+      containers:
+      - name: thread-exporter
+        image: docker.io/pcuzner/thread-exporter:latest
+        securityContext:
+          privileged: true
+          runAsUser: 0
+        serviceAccount: node-exporter
+        serviceAccountName: node-exporter
+        resources:
+          limits:
+            memory: 200Mi
+          requests:
+            cpu: 500m
+            memory: 200Mi
+        env:
+        - name: FILTER
+          value: "ceph-osd"
+        - name: PORT
+          value: "9199"
+        ports:
+        - containerPort: 9199
+          hostPort: 9199
+          name: http
+          protocol: TCP
+        volumeMounts:
+        - name: procfilesystem
+          mountPath: /host/proc
+          readOnly: true
+        hostNetwork: true
+        hostPID: true
+        nodeSelector:
+          kubernetes.io/os: linux    
+      volumes:
+      - name: procfilesystem
+        hostPath:
+          path: /proc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: thread-exporter-service
+  labels:
+    app: thread-exporter
+spec:
+  ports:
+  - name: thread-metrics
+    port: 9199
+    targetPort: 9199
+    protocol: TCP
+  selector:
+    app: thread-exporter
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: thread-exporter-monitor
+  namespace: openshift-storage
+  labels:
+    app: thread-exporter
+spec:
+  selector:
+    matchLabels:
+      app: thread-exporter
+  endpoints:
+  - port: thread-metrics
+    interval: 5s
+

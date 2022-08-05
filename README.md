@@ -22,8 +22,11 @@ Alternatively, you can build the application as a container and run that. To bui
 e.g.
 ```
 cd buildah
-./build-thread-exporter.sh 0.1
+./build-thread-exporter.sh 0.2
 ```
+
+| :bulb: Depending on your OS, you may need to build with root/sudo. On Fedora 36, rootless builds (and rootless podman!) seem to work fine. |
+|-----|
 
 ## Running the thread-exporter
 
@@ -58,7 +61,55 @@ Notes:
 * the scripts options (filter and port) are configurable via environment variables
 * The exporter accesses /proc like node-exporter, so it needs to run privileged. You may also have to set selinux to permissive.
 
+### As a Daemonset in Openshift 4.x
 
+The examples folder provides 4 yaml files;
+| filename | Description |
+|------------|---------------|
+| thread-exporter-aio.yml | Single file that creates all required resources (pick me!)|
+| thread-exporter.yml | create the Daemonset for the thread-exporter |
+| thread-exporter-service.yml | create the Service resource (endpoint definition) |
+| thread-exporter-service-monitor.yml | create the ServiceMonitor resource for scraping the endpoint |
+
+| :bulb: If the perfscale_* metrics aren't showing up in  Openshift's Prometheus, check that the namespace you're using has the `openshift.io/cluster-monitoring` label set to `true`|
+|-----|
+
+Before you deploy, decide which process(es) you need data for and declare them in the spec.containers.env section. The example provided shows ceph-osd, but this could be any process name (as defined in `/proc/<pid>/comm`)
+
+
+To deploy, all you really need is the '*aio*' version
+```
+# oc create -f thread-exporter-aio.yml
+```
+
+Once deployed you should see something like this;
+
+```
+[root@pcuzner-build thread-exporter]# oc get all -l app=thread-exporter
+NAME                        READY   STATUS    RESTARTS   AGE
+pod/thread-exporter-4dlp4   1/1     Running   0          17h
+pod/thread-exporter-9s25r   1/1     Running   0          17h
+pod/thread-exporter-g6d9m   1/1     Running   0          17h
+pod/thread-exporter-hvld8   1/1     Running   0          17h
+pod/thread-exporter-rrjv4   1/1     Running   0          17h
+
+NAME                              TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
+service/thread-exporter-service   ClusterIP   172.30.11.101   <none>        9199/TCP   19h
+
+NAME                             DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
+daemonset.apps/thread-exporter   5         5         5       5            5           <none>          17h
+
+```
+
+You should start seeing metrics appear within 1-2 minutes.
+
+The host's /proc filesystem is normally not accessible to containers, but thread-exporter needs access to read the `/proc/*/stat/*` files. To grant access to /proc, the thread-exporter container runs as a privileged container, using the built-in node-exporter `ServiceAccount` (and associated node-exporter SCC).
+
+To remove the thread-exporter, you can delete the resources individually, or if you created them using the 'aio' yml, just use that.
+
+```
+# oc delete -f thread-exporter-aio.yml
+```
 
 ## Metrics
 
@@ -89,14 +140,15 @@ Using a relatively low scrape interval, helps to capture CPU spikes.
   
 ## Ideas for Future work A.K.A the TODO list
 
-- [ ] update the DaemonNames class to extract the name correctly within k8s/rook
+- [X] update the DaemonNames class to extract the name correctly within k8s/rook
 - [ ] update logging to send log records to file and stdout for k8s deployments
-- [ ] create sample yaml for kubernetes deployment
+- [X] create sample yaml for kubernetes deployment
 - [ ] add tox to lint and mypy the code
 - [ ] add the collect time for the main functions to the metrics
 - [ ] add sample grafana dashboard
 - [ ] add a config file to hold the filter definition
 - [ ] make the daemon respond to a reload (SIGHUP), so you can update what is being tracked dynamically
-- [ ] cath filenotfound on readfile - i.e. osd restarts
-- [ ] during osd restart the extract ceph fails to find the -n paramter 
+- [X] catch filenotfound on readfile - i.e. osd restarts
+- [ ] add tests! Finding pids and daemon name extract are bare minimums!
+
 

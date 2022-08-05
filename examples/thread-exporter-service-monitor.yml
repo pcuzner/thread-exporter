@@ -1,0 +1,16 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: thread-exporter-monitor
+  namespace: openshift-storage
+  labels:
+    app: thread-exporter
+spec:
+  selector:
+    matchLabels:
+      app: thread-exporter
+  endpoints:
+  - port: thread-metrics
+    interval: 5s
+
